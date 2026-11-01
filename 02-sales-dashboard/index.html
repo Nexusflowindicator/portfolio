@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pulse Sales Dashboard</title>
+<style>
+:root{--bg:#f4f6fa;--card:#fff;--text:#14213d;--muted:#6b7591;--line:#e3e7ef;--accent:#3b6ef5;--accent2:#14b8a6;--up:#16a34a;--down:#dc2626;--shadow:0 1px 2px rgba(20,33,61,.06),0 4px 16px rgba(20,33,61,.05)}
+[data-theme=dark]{--bg:#0f1420;--card:#171e2e;--text:#e7ebf5;--muted:#8d97b0;--line:#26304a;--accent:#6b93ff;--accent2:#2dd4bf;--up:#4ade80;--down:#f87171;--shadow:none}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:18px 28px;border-bottom:1px solid var(--line);background:var(--card)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px}.logo{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent2))}
+.controls{display:flex;flex-wrap:wrap;gap:8px}
+select,input,button{font:inherit;color:var(--text);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:7px 10px}
+button{cursor:pointer}button:hover{border-color:var(--accent)}
+main{padding:24px 28px;max-width:1320px;margin:0 auto;display:grid;gap:18px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:18px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;box-shadow:var(--shadow);min-width:0}
+.kpi .label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+.kpi .value{font-size:28px;font-weight:700;margin:6px 0 2px;font-variant-numeric:tabular-nums}
+.delta{font-size:13px;font-weight:600}.delta.up{color:var(--up)}.delta.down{color:var(--down)}.delta span{color:var(--muted);font-weight:400}
+.row{display:grid;grid-template-columns:2fr 1fr;gap:18px}@media(max-width:900px){.row{grid-template-columns:1fr}header,main{padding-left:16px;padding-right:16px}}
+h2{font-size:15px;margin:0 0 12px;display:flex;justify-content:space-between;align-items:center}h2 small{color:var(--muted);font-weight:400}
+svg{display:block;width:100%;overflow:visible}.axis text{fill:var(--muted);font-size:11px}.grid line{stroke:var(--line)}
+.tip{position:fixed;pointer-events:none;background:var(--text);color:var(--card);padding:6px 9px;border-radius:6px;font-size:12px;opacity:0;transition:opacity .1s;white-space:nowrap}
+.bars .bar{display:grid;grid-template-columns:130px 1fr 80px;align-items:center;gap:10px;margin:9px 0;font-size:13px}
+.track{height:10px;background:var(--bg);border-radius:6px;overflow:hidden}.fill{height:100%;background:var(--accent);border-radius:6px;transition:width .4s}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:left}
+th{color:var(--muted);font-weight:600;cursor:pointer;user-select:none;white-space:nowrap}th.sorted::after{content:" ▾"}th.sorted.asc::after{content:" ▴"}
+td.r,th.r{text-align:right}.pill{padding:2px 8px;border-radius:999px;font-size:12px;background:var(--bg);border:1px solid var(--line)}
+.tablebar{display:flex;gap:8px;flex-wrap:wrap;justify-content:space-between;margin-bottom:10px}.pager{display:flex;gap:6px;align-items:center;color:var(--muted)}
+.scroll{overflow-x:auto}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><div class="logo"></div>Pulse <span style="color:var(--muted);font-weight:400">Sales Dashboard</span></div>
+  <div class="controls">
+    <select id="range" aria-label="Date range"><option value="30">Last 30 days</option><option value="90" selected>Last 90 days</option><option value="365">Year to date</option></select>
+    <select id="channel" aria-label="Channel"><option value="all">All channels</option><option>Webshop</option><option>Marketplace</option></select>
+    <button id="theme" aria-label="Toggle theme">🌓 Theme</button>
+  </div>
+</header>
+<main>
+  <section class="kpis" id="kpis"></section>
+  <section class="row">
+    <div class="card"><h2>Revenue over time <small id="trendNote"></small></h2><svg id="trend" height="260"></svg></div>
+    <div class="card"><h2>Revenue by product</h2><div class="bars" id="products"></div></div>
+  </section>
+  <section class="row">
+    <div class="card"><div class="tablebar"><h2 style="margin:0">Recent orders</h2>
+      <div style="display:flex;gap:8px"><input id="search" placeholder="Search order, product, country…"><button id="export">⇩ CSV</button></div></div>
+      <div class="scroll"><table id="orders"><thead><tr>
+        <th data-k="id">Order</th><th data-k="date" class="sorted">Date</th><th data-k="product">Product</th><th data-k="channel">Channel</th><th data-k="country">Country</th><th data-k="qty" class="r">Qty</th><th data-k="revenue" class="r">Revenue</th>
+      </tr></thead><tbody></tbody></table></div>
+      <div class="tablebar" style="margin:10px 0 0"><span class="pager" id="count"></span><span class="pager"><button id="prev">‹</button><span id="page"></span><button id="next">›</button></span></div>
+    </div>
+    <div class="card"><h2>Top countries</h2><div class="bars" id="countries"></div></div>
+  </section>
+</main>
+<div class="tip" id="tip"></div>
+<script>
+// ---- Deterministic demo data (seeded PRNG so screenshots are reproducible) ----
+const rng=(s=>()=>(s=Math.imul(s^s>>>15,1|s),s^=s+Math.imul(s^s>>>7,61|s),((s^s>>>14)>>>0)/4294967296))(20261101);
+const PRODUCTS=[["Wireless Earbuds",59.9],["Smart Watch",149],["Phone Case",14.5],["USB-C Charger 65W",34.99],["Bluetooth Speaker",79],["Laptop Stand",42]];
+const COUNTRIES=["United States","Germany","United Kingdom","France","Netherlands","Hungary","Canada"];
+const TODAY=new Date(Date.UTC(2026,9,31)),DAY=864e5;
+const ORDERS=[];
+for(let d=0;d<730;d++){const date=new Date(TODAY-d*DAY);const season=1+.12*Math.sin((date.getUTCMonth()-8)/12*2*Math.PI)+(d<120?.25*(1-d/120):0);
+  const n=Math.round((14+rng()*10)*season*(date.getUTCDay()%6===0?1.3:1));
+  for(let i=0;i<n;i++){const p=PRODUCTS[Math.floor(Math.pow(rng(),1.4)*PRODUCTS.length)];const qty=1+Math.floor(Math.pow(rng(),3)*4);
+    ORDERS.push({id:"#"+(100000+ORDERS.length),date,product:p[0],channel:rng()<.58?"Webshop":"Marketplace",country:COUNTRIES[Math.floor(Math.pow(rng(),1.8)*COUNTRIES.length)],qty,revenue:+(qty*p[1]*(rng()<.2?.85:1)).toFixed(2)});}}
+
+// ---- State & helpers ----
+const $=s=>document.querySelector(s),fmt=n=>"$"+n.toLocaleString("en-US",{maximumFractionDigits:0}),fmt2=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const S={range:90,channel:"all",q:"",sort:"date",asc:false,page:0,per:8};
+const css=v=>getComputedStyle(document.body).getPropertyValue(v).trim();
+function slice(offset=0){const end=TODAY-offset*S.range*DAY,start=end-S.range*DAY;
+  return ORDERS.filter(o=>o.date>start&&o.date<=end&&(S.channel==="all"||o.channel===S.channel));}
+const sum=(a,f)=>a.reduce((t,o)=>t+f(o),0);
+const group=(a,k)=>Object.entries(a.reduce((m,o)=>(m[o[k]]=(m[o[k]]||0)+o.revenue,m),{})).sort((x,y)=>y[1]-x[1]);
+
+function kpis(cur,prev){const defs=[["Revenue",a=>sum(a,o=>o.revenue),fmt],["Orders",a=>a.length,n=>n.toLocaleString()],["Avg. order value",a=>a.length?sum(a,o=>o.revenue)/a.length:0,fmt2],["Units sold",a=>sum(a,o=>o.qty),n=>n.toLocaleString()]];
+  $("#kpis").innerHTML=defs.map(([l,f,fm])=>{const c=f(cur),p=f(prev),d=p?(c-p)/p*100:0;
+    return `<div class="card kpi"><div class="label">${l}</div><div class="value">${fm(c)}</div><div class="delta ${d>=0?"up":"down"}">${d>=0?"▲":"▼"} ${Math.abs(d).toFixed(1)}% <span>vs previous ${S.range} days</span></div></div>`}).join("");}
+
+function trend(cur){const svg=$("#trend"),W=svg.clientWidth||700,H=260,P={l:52,r:12,t:10,b:26};
+  const bucket=S.range>90?7:1,map=new Map();
+  cur.forEach(o=>{const k=Math.floor((TODAY-o.date)/DAY/bucket);map.set(k,(map.get(k)||0)+o.revenue)});
+  const n=Math.ceil(S.range/bucket),pts=[...Array(n)].map((_,i)=>({k:n-1-i,v:map.get(n-1-i)||0,date:new Date(TODAY-(n-1-i)*bucket*DAY)}));
+  const max=Math.max(...pts.map(p=>p.v))*1.1||1,x=i=>P.l+i*(W-P.l-P.r)/(n-1),y=v=>H-P.b-v/max*(H-P.t-P.b);
+  const line=pts.map((p,i)=>`${i?"L":"M"}${x(i).toFixed(1)},${y(p.v).toFixed(1)}`).join("");
+  const ticks=[0,.25,.5,.75,1].map(t=>t*max/1.1);
+  const xl=pts.map((p,i)=>i%Math.ceil(n/6)===0?`<text x="${x(i)}" y="${H-6}" text-anchor="middle">${p.date.toLocaleDateString("en-US",{month:"short",day:"numeric",timeZone:"UTC"})}</text>`:"").join("");
+  svg.setAttribute("viewBox",`0 0 ${W} ${H}`);
+  svg.innerHTML=`<defs><linearGradient id="g" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${css("--accent")}" stop-opacity=".28"/><stop offset="1" stop-color="${css("--accent")}" stop-opacity="0"/></linearGradient></defs>
+  <g class="grid">${ticks.map(t=>`<line x1="${P.l}" x2="${W-P.r}" y1="${y(t)}" y2="${y(t)}"/>`).join("")}</g>
+  <g class="axis">${ticks.map(t=>`<text x="${P.l-8}" y="${y(t)+4}" text-anchor="end">${t>=1000?"$"+(t/1000).toFixed(1)+"k":"$"+t.toFixed(0)}</text>`).join("")}${xl}</g>
+  <path d="${line}L${x(n-1)},${H-P.b}L${x(0)},${H-P.b}Z" fill="url(#g)"/><path d="${line}" fill="none" stroke="${css("--accent")}" stroke-width="2.2" stroke-linejoin="round"/>
+  <line id="hx" y1="${P.t}" y2="${H-P.b}" stroke="${css("--muted")}" stroke-dasharray="3 3" opacity="0"/><circle id="hd" r="4.5" fill="${css("--card")}" stroke="${css("--accent")}" stroke-width="2.5" opacity="0"/>
+  <rect x="${P.l}" y="0" width="${W-P.l-P.r}" height="${H}" fill="transparent" id="hover"/>`;
+  $("#trendNote").textContent=bucket>1?"weekly":"daily";
+  const tip=$("#tip");
+  $("#hover").onmousemove=e=>{const r=svg.getBoundingClientRect(),mx=(e.clientX-r.left)*W/r.width,i=Math.max(0,Math.min(n-1,Math.round((mx-P.l)/(W-P.l-P.r)*(n-1)))),p=pts[i];
+    $("#hx").setAttribute("x1",x(i));$("#hx").setAttribute("x2",x(i));$("#hx").setAttribute("opacity",1);$("#hd").setAttribute("cx",x(i));$("#hd").setAttribute("cy",y(p.v));$("#hd").setAttribute("opacity",1);
+    tip.innerHTML=`<b>${fmt(p.v)}</b> · ${bucket>1?"week of ":""}${p.date.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",timeZone:"UTC"})}`;tip.style.left=e.clientX+12+"px";tip.style.top=e.clientY-34+"px";tip.style.opacity=1};
+  $("#hover").onmouseleave=()=>{tip.style.opacity=0;$("#hx").setAttribute("opacity",0);$("#hd").setAttribute("opacity",0)};}
+
+function bars(el,rows,color){const max=rows[0]?.[1]||1;
+  el.innerHTML=rows.map(([k,v])=>`<div class="bar"><span>${k}</span><div class="track"><div class="fill" style="width:${v/max*100}%;${color?`background:${color}`:""}"></div></div><span class="num">${fmt(v)}</span></div>`).join("");}
+
+function table(cur){let rows=cur.filter(o=>!S.q||`${o.id} ${o.product} ${o.country} ${o.channel}`.toLowerCase().includes(S.q));
+  rows.sort((a,b)=>(a[S.sort]>b[S.sort]?1:a[S.sort]<b[S.sort]?-1:0)*(S.asc?1:-1));
+  const pages=Math.max(1,Math.ceil(rows.length/S.per));S.page=Math.min(S.page,pages-1);
+  $("#orders tbody").innerHTML=rows.slice(S.page*S.per,(S.page+1)*S.per).map(o=>`<tr><td>${o.id}</td><td>${o.date.toLocaleDateString("en-US",{month:"short",day:"numeric",timeZone:"UTC"})}</td><td>${o.product}</td><td><span class="pill">${o.channel}</span></td><td>${o.country}</td><td class="r">${o.qty}</td><td class="r">${fmt2(o.revenue)}</td></tr>`).join("")||`<tr><td colspan="7" style="color:var(--muted)">No matching orders</td></tr>`;
+  $("#count").textContent=`${rows.length.toLocaleString()} orders`;$("#page").textContent=`${S.page+1} / ${pages}`;
+  document.querySelectorAll("th").forEach(th=>{th.classList.toggle("sorted",th.dataset.k===S.sort);th.classList.toggle("asc",th.dataset.k===S.sort&&S.asc)});
+  return rows;}
+
+let visible=[];
+function render(){const cur=slice(0),prev=slice(1);kpis(cur,prev);trend(cur);bars($("#products"),group(cur,"product"));bars($("#countries"),group(cur,"country"),css("--accent2"));visible=table(cur);}
+
+$("#range").onchange=e=>{S.range=+e.target.value;S.page=0;render()};
+$("#channel").onchange=e=>{S.channel=e.target.value;S.page=0;render()};
+$("#search").oninput=e=>{S.q=e.target.value.toLowerCase().trim();S.page=0;visible=table(slice(0))};
+$("#prev").onclick=()=>{S.page=Math.max(0,S.page-1);table(slice(0))};$("#next").onclick=()=>{S.page++;table(slice(0))};
+document.querySelectorAll("th").forEach(th=>th.onclick=()=>{S.asc=S.sort===th.dataset.k?!S.asc:false;S.sort=th.dataset.k;table(slice(0))});
+$("#theme").onclick=()=>{document.documentElement.dataset.theme=document.documentElement.dataset.theme==="dark"?"light":"dark";try{localStorage.setItem("theme",document.documentElement.dataset.theme)}catch(e){}render()};
+$("#export").onclick=()=>{const csv=["order,date,product,channel,country,qty,revenue",...visible.map(o=>[o.id,o.date.toISOString().slice(0,10),o.product,o.channel,o.country,o.qty,o.revenue].join(","))].join("\n");
+  const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download="orders.csv";a.click();};
+try{const t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}
+addEventListener("resize",()=>trend(slice(0)));
+render();
+</script>
+</body>
+</html>
