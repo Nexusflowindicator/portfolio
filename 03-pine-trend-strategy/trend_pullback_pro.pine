@@ -1,43 +1,56 @@
 //@version=6
-// Trend Pullback Pro: trend-following pullback strategy with ATR risk management,
-// risk-based position sizing, breakeven stop, non-repainting HTF filter,
-// alert messages and an on-chart performance panel.
+// Trend Pullback Pro
+// Trend-following pullback strategy: enters in the direction of a confirmed trend after a
+// pullback to the fast EMA, risks a fixed % of equity per trade, and lets winners run with an
+// ATR trailing stop. Non-repainting higher-timeframe filter, realistic default costs,
+// backtest date range, alert messages and an on-chart performance panel.
+//
+// Designed for trending markets on 4H and Daily charts (e.g. crypto, trending stocks).
+// Like any trend-following system it loses in sideways markets and on very low timeframes,
+// where costs dominate. Set commission and slippage to match YOUR broker before judging results.
 strategy("Trend Pullback Pro", shorttitle = "TPP", overlay = true,
      initial_capital = 10000, currency = currency.USD,
      default_qty_type = strategy.fixed, default_qty_value = 1,
      commission_type = strategy.commission.percent, commission_value = 0.05,
-     slippage = 2, pyramiding = 0)
+     slippage = 2, pyramiding = 0, margin_long = 100, margin_short = 100)
 
 // ───────────── Inputs ─────────────
 G1 = "Trend"
 G2 = "Entry"
 G3 = "Risk management"
-G4 = "Display"
+G4 = "Backtest"
+G5 = "Display"
 fastLen    = input.int(21, "Fast EMA", minval = 2, group = G1)
 slowLen    = input.int(55, "Slow EMA", minval = 5, group = G1)
-useHtf     = input.bool(true, "Higher-timeframe filter", group = G1, inline = "htf")
-htfTf      = input.timeframe("240", "", group = G1, inline = "htf")
-rsiLen     = input.int(14, "RSI length", minval = 2, group = G2)
-lookback   = input.int(5, "Pullback lookback (bars)", minval = 1, group = G2)
+useHtf     = input.bool(true, "Higher-timeframe filter", group = G1)
+htfAuto    = input.bool(true, "Auto HTF (4× chart timeframe)", group = G1)
+htfManual  = input.timeframe("240", "Manual HTF", group = G1, tooltip = "Used when Auto HTF is off. Must be higher than the chart timeframe.")
+lookback   = input.int(5, "Pullback lookback (bars)", minval = 1, group = G2,
+     tooltip = "Price must have touched the fast EMA within this many bars before the entry bar.")
+allowLong  = input.bool(true, "Allow longs", group = G2)
 allowShort = input.bool(true, "Allow shorts", group = G2)
 atrLen     = input.int(14, "ATR length", minval = 1, group = G3)
-atrMult    = input.float(1.5, "Stop distance (ATR ×)", minval = 0.1, step = 0.1, group = G3)
-rr         = input.float(2.0, "Take profit (R multiple)", minval = 0.1, step = 0.1, group = G3)
+atrMult    = input.float(1.5, "Initial stop (ATR ×)", minval = 0.1, step = 0.1, group = G3)
+useTrail   = input.bool(true, "ATR trailing stop", group = G3, inline = "tr")
+trailMult  = input.float(3.0, "×", minval = 0.5, step = 0.5, group = G3, inline = "tr")
+tpR        = input.float(0.0, "Fixed take profit (R, 0 = off)", minval = 0, step = 0.5, group = G3,
+     tooltip = "Off by default: trend systems earn most of their profit from a few large winners.")
 riskPct    = input.float(1.0, "Risk per trade (% of equity)", minval = 0.1, maxval = 10, step = 0.1, group = G3)
-useBE      = input.bool(true, "Move stop to breakeven at +1R", group = G3)
-showDash   = input.bool(true, "Show performance panel", group = G4)
+useBE      = input.bool(false, "Breakeven stop", group = G3, inline = "be")
+beTrigR    = input.float(1.0, "at +R", minval = 0.1, step = 0.1, group = G3, inline = "be")
+beOffR     = input.float(0.1, "lock R", minval = 0, step = 0.05, group = G3, inline = "be",
+     tooltip = "Stop is moved slightly past entry so commissions are covered.")
+startDate  = input.time(timestamp("01 Jan 2000 00:00 +0000"), "Start date", group = G4)
+endDate    = input.time(timestamp("01 Jan 2100 00:00 +0000"), "End date", group = G4)
+showDash   = input.bool(true, "Show performance panel", group = G5)
 
 // ───────────── Indicators ─────────────
 fastEma = ta.ema(close, fastLen)
 slowEma = ta.ema(close, slowLen)
-rsi     = ta.rsi(close, rsiLen)
 atr     = ta.atr(atrLen)
-rsiUp   = ta.crossover(rsi, 50)
-rsiDown = ta.crossunder(rsi, 50)
-lowestLow   = ta.lowest(low, lookback)
-highestHigh = ta.highest(high, lookback)
 
-// Non-repainting higher-timeframe trend: confirmed (previous) HTF bar only.
+// Non-repainting higher-timeframe trend: only the previous, fully closed HTF bar is used.
+htfTf    = htfAuto ? timeframe.from_seconds(timeframe.in_seconds() * 4) : htfManual
 htfClose = request.security(syminfo.tickerid, htfTf, close[1], lookahead = barmerge.lookahead_on)
 htfEma   = request.security(syminfo.tickerid, htfTf, ta.ema(close, slowLen)[1], lookahead = barmerge.lookahead_on)
 htfUp    = not useHtf or htfClose > htfEma
@@ -46,52 +59,67 @@ htfDown  = not useHtf or htfClose < htfEma
 trendUp   = fastEma > slowEma and close > slowEma and htfUp
 trendDown = fastEma < slowEma and close < slowEma and htfDown
 
-longSignal  = trendUp and lowestLow <= fastEma and rsiUp
-shortSignal = allowShort and trendDown and highestHigh >= fastEma and rsiDown
+// Pullback: price touched the fast EMA recently. Trigger: the bar closes beyond the previous
+// bar's extreme, back on the trend side of the fast EMA (the pullback is ending).
+pulledBackL = ta.lowest(low, lookback) <= fastEma
+pulledBackS = ta.highest(high, lookback) >= fastEma
+inWindow    = time >= startDate and time <= endDate
+
+longSignal  = allowLong  and inWindow and trendUp   and pulledBackL and close > high[1] and close > fastEma
+shortSignal = allowShort and inWindow and trendDown and pulledBackS and close < low[1]  and close < fastEma
 
 // ───────────── Position sizing ─────────────
-// Size so that hitting the stop loses riskPct % of equity (capped at 1x equity, no leverage).
+// Size so that hitting the initial stop loses riskPct % of equity (capped at 1× equity, no leverage).
 f_qty(float entry, float stop) =>
     float perUnit = math.abs(entry - stop)
     float qty = perUnit > 0 ? strategy.equity * riskPct / 100 / perUnit : 0.0
     math.min(qty, strategy.equity / entry)
 
 // ───────────── Orders ─────────────
-var float stopPx = na
-var float tpPx   = na
-var float riskPx = na
-bool enteredNow = false  // per-bar flag: don't overwrite fresh exit levels on a reversal bar
+var float stopPx   = na
+var float tpPx     = na
+var float riskPx   = na
+var float trailRef = na
+bool enteredNow = false  // per-bar flag: don't overwrite fresh exit levels on the entry bar
 
 if longSignal and strategy.position_size <= 0
-    riskPx := atr * atrMult
-    stopPx := close - riskPx
-    tpPx   := close + riskPx * rr
+    riskPx   := atr * atrMult
+    stopPx   := close - riskPx
+    tpPx     := tpR > 0 ? close + riskPx * tpR : na
+    trailRef := close
     strategy.entry("Long", strategy.long, qty = f_qty(close, stopPx))
     strategy.exit("L-Exit", "Long", stop = stopPx, limit = tpPx)
     enteredNow := true
     alert("TPP LONG " + syminfo.ticker + " @ " + str.tostring(close, format.mintick) +
-         " | SL " + str.tostring(stopPx, format.mintick) + " | TP " + str.tostring(tpPx, format.mintick), alert.freq_once_per_bar_close)
+         " | SL " + str.tostring(stopPx, format.mintick), alert.freq_once_per_bar_close)
 
 if shortSignal and strategy.position_size >= 0
-    riskPx := atr * atrMult
-    stopPx := close + riskPx
-    tpPx   := close - riskPx * rr
+    riskPx   := atr * atrMult
+    stopPx   := close + riskPx
+    tpPx     := tpR > 0 ? close - riskPx * tpR : na
+    trailRef := close
     strategy.entry("Short", strategy.short, qty = f_qty(close, stopPx))
     strategy.exit("S-Exit", "Short", stop = stopPx, limit = tpPx)
     enteredNow := true
     alert("TPP SHORT " + syminfo.ticker + " @ " + str.tostring(close, format.mintick) +
-         " | SL " + str.tostring(stopPx, format.mintick) + " | TP " + str.tostring(tpPx, format.mintick), alert.freq_once_per_bar_close)
+         " | SL " + str.tostring(stopPx, format.mintick), alert.freq_once_per_bar_close)
 
-// Breakeven: once price has moved +1R in our favour, move the stop to the fill price.
+// Stop management on every closed bar while in a trade. The stop only ever moves in our favour.
 avgPx = strategy.position_avg_price
-if not enteredNow and useBE and strategy.position_size > 0 and high >= avgPx + riskPx and stopPx < avgPx
-    stopPx := avgPx
-if not enteredNow and useBE and strategy.position_size < 0 and low <= avgPx - riskPx and stopPx > avgPx
-    stopPx := avgPx
-
 if not enteredNow and strategy.position_size > 0
+    if useTrail
+        trailRef := math.max(trailRef, close)
+        stopPx   := math.max(stopPx, trailRef - atr * trailMult)
+    if useBE and high >= avgPx + riskPx * beTrigR
+        stopPx := math.max(stopPx, avgPx + riskPx * beOffR)
     strategy.exit("L-Exit", "Long", stop = stopPx, limit = tpPx)
+
 if not enteredNow and strategy.position_size < 0
+    if useTrail
+        trailRef := math.min(trailRef, close)
+        stopPx   := math.min(stopPx, trailRef + atr * trailMult)
+    if useBE and low <= avgPx - riskPx * beTrigR
+        stopPx := math.min(stopPx, avgPx - riskPx * beOffR)
     strategy.exit("S-Exit", "Short", stop = stopPx, limit = tpPx)
 
 // ───────────── Visuals ─────────────
@@ -105,7 +133,7 @@ plot(inPos ? stopPx : na, "Stop", color = #ef4444, style = plot.style_linebr, li
 plot(inPos ? tpPx : na, "Target", color = #22c55e, style = plot.style_linebr, linewidth = 2)
 
 // ───────────── Performance panel ─────────────
-var table dash = table.new(position.top_right, 2, 7, bgcolor = color.new(#0f172a, 8), border_width = 1, border_color = #334155)
+var table dash = table.new(position.top_right, 2, 8, bgcolor = color.new(#0f172a, 8), border_width = 1, border_color = #334155)
 
 f_row(int r, string label, string val, color col) =>
     table.cell(dash, 0, r, label, text_color = #94a3b8, text_size = size.small, text_halign = text.align_left)
@@ -115,12 +143,14 @@ if showDash and barstate.islast
     int   trades  = strategy.closedtrades
     float winRate = trades > 0 ? float(strategy.wintrades) / trades * 100 : 0.0
     float pf      = strategy.grossloss > 0 ? strategy.grossprofit / strategy.grossloss : na
-    float net     = strategy.netprofit
+    float netPct  = strategy.netprofit / strategy.initial_capital * 100
+    float ddPct   = strategy.max_drawdown_percent
     table.cell(dash, 0, 0, "Trend Pullback Pro", text_color = color.white, text_size = size.normal)
     table.merge_cells(dash, 0, 0, 1, 0)
     f_row(1, "Closed trades", str.tostring(trades), color.white)
-    f_row(2, "Win rate", str.tostring(winRate, "#.0") + "%", winRate >= 50 ? #4ade80 : #fbbf24)
+    f_row(2, "Win rate", str.tostring(winRate, "#.0") + "%", color.white)
     f_row(3, "Profit factor", na(pf) ? "n/a" : str.tostring(pf, "#.00"), na(pf) or pf >= 1 ? #4ade80 : #f87171)
-    f_row(4, "Net profit", str.tostring(net, "#,##0.00") + " " + strategy.account_currency, net >= 0 ? #4ade80 : #f87171)
-    f_row(5, "Max drawdown", str.tostring(strategy.max_drawdown, "#,##0.00"), #f87171)
-    f_row(6, "Trend", trendUp ? "Bullish" : trendDown ? "Bearish" : "Neutral", trendUp ? #4ade80 : trendDown ? #f87171 : color.silver)
+    f_row(4, "Net profit", str.tostring(netPct, "#.0") + "%", netPct >= 0 ? #4ade80 : #f87171)
+    f_row(5, "Max drawdown", str.tostring(ddPct, "#.0") + "%", #f87171)
+    f_row(6, "Risk / trade", str.tostring(riskPct, "#.0#") + "% equity", color.white)
+    f_row(7, "Trend", trendUp ? "Bullish" : trendDown ? "Bearish" : "Neutral", trendUp ? #4ade80 : trendDown ? #f87171 : color.silver)
