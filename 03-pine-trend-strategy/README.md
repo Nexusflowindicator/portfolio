@@ -23,7 +23,19 @@ A trend-following strategy for TradingView with professional risk management, bu
 - **Panel:** closed trades, win rate, profit factor, net profit %, max drawdown %, risk per trade
   and current trend on the chart.
 
-## How it behaves (independent cross-check)
+## Verified in TradingView
+BTCUSD, Daily chart, Oct 2017 – Nov 2026, $10,000 start, default settings (0.05% commission per
+side, 2 ticks slippage, 1% risk per trade):
+
+| Net profit | Max drawdown | Profit factor | Win rate | Trades |
+|---|---|---|---|---|
+| +57.25% | 9.25% | 1.72 | 29.35% | 92 |
+
+![TradingView Strategy Tester, BTCUSD 1D](screenshots/tradingview-btc-1d.png)
+
+The low win rate is normal for trend following: many small losses, a few large winners.
+
+## How it behaves on other markets (independent cross-check)
 The rules were replicated in Python (next-bar-open fills, intrabar stop handling, commission on
 both sides) and run on public sample data. TradingView's own data feed and fill model differ a
 little, so treat these as indications, not promises.
